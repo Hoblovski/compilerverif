@@ -1,5 +1,5 @@
 From Coq Require Import Arith ZArith Psatz Bool String List Program.Equality.
-Require Import Sequences.
+Require Import Sequences Lemmas.
 
 Local Open Scope string_scope.
 Local Open Scope Z_scope.
@@ -156,12 +156,15 @@ Definition OR (b1 b2: bexp) : bexp := NOT (AND (NOT b1) (NOT b2)).
 Lemma beval_OR:
   forall s b1 b2, beval s (OR b1 b2) = beval s b1 || beval s b2.
 Proof.
-  intros; cbn.
   (* Hint: do "SearchAbout negb" to see the available lemmas about Boolean negation. *)
   (* Hint: or just do a case analysis on [beval s b1] and [beval s b2], there are
      only 4 cases to consider. *)
-  (* FILL IN HERE *)
-Abort.
+  intros; cbn.
+  remember (beval s b1) as b1'.
+  remember (beval s b2) as b2'.
+  (* TODO: any clever bool automations? *)
+  destruct b1'; destruct b2'; reflexivity.
+Qed.
 
 (** ** 1.4 Commands *)
 
@@ -322,19 +325,89 @@ Eval compute in
 Lemma cexec_bounded_sound:
   forall fuel s c s', cexec_bounded fuel s c = Some s' -> cexec s c s'.
 Proof.
-  induction fuel as [ | fuel ]; cbn; intros.
-- discriminate.
-- destruct c.
-  (* FILL IN HERE *)
-Abort.
+  induction fuel as [ | fuel].
+  - intros. simpl in H. inversion H.
+  - destruct c; simpl; intros;
+      try (inversion H; subst; constructor; clear H1).
+    + destruct (cexec_bounded fuel s c1) eqn:H'; try inversion H.
+      pose proof (IHfuel _ _ _ H').
+      pose proof (IHfuel _ _ _ H).
+      eapply cexec_seq; eassumption.
+    + destruct (beval s b);
+      apply IHfuel; assumption.
+    + destruct (beval s b) eqn:Hsb.
+      destruct (cexec_bounded fuel s c) eqn:H';
+        try inversion H.
+      pose proof (IHfuel _ _ _ H').
+      pose proof (IHfuel _ _ _ H).
+      econstructor; eassumption.
+      inversion H; subst; constructor; assumption.
+Qed.
 
 Lemma cexec_bounded_complete:
   forall s c s', cexec s c s' ->
   exists fuel1, forall fuel, (fuel >= fuel1)%nat -> cexec_bounded fuel s c = Some s'.
 Proof.
   induction 1.
-  (* FILL IN HERE *)
-Abort.
+  - (* SKIP *)
+    exists 1%nat; intros.
+    destruct fuel; try inversion H.
+    constructor. reflexivity.
+  - (* ASSIGN *)
+    exists 1%nat; intros.
+    destruct fuel; try inversion H.
+    constructor. reflexivity.
+  - (* SEQ *)
+    destruct IHcexec1 as [fuel1 IHc1exec];
+      assert (Hc1exec := IHc1exec fuel1 (ge_refl fuel1));
+    destruct IHcexec2 as [fuel2 IHc2exec];
+      assert (Hc2exec := IHc2exec fuel2 (ge_refl fuel2)).
+      (* actually should be precisely  max(fuel1, fuel2)  *)
+    exists (1 + fuel1 + fuel2)%nat; intros fuel Hfuel.
+    destruct (ge_diff Hfuel) as [k Hk]; clear Hfuel; subst fuel.
+    simpl.
+    remember (fuel1 + fuel2 + k)%nat as fuel_big.
+    assert (Hc1execBig: cexec_bounded fuel_big s c1 = Some s') by
+      (apply IHc1exec; lia).
+    assert (Hc2execBig: cexec_bounded fuel_big s' c2 = Some s'') by
+      (apply IHc2exec; lia).
+    destruct (cexec_bounded fuel_big s c1) eqn:Hc1;
+      try inversion Hc1execBig.
+    destruct (cexec_bounded fuel_big s' c2) eqn:Hc2;
+      try inversion Hc2execBig.
+    subst; reflexivity.
+  - (* IFTHENELSE *)
+    destruct IHcexec as [fuel IHcexec].
+    exists (S fuel).
+    intros fuel' Hfuel'; destruct (ge_diff Hfuel') as [k Hk]; clear Hfuel'; subst fuel'.
+    simpl.
+    destruct (beval s b) eqn:Hb;
+      apply IHcexec; lia.
+  - (* WHILEDONE *) exists 1%nat.
+    intros fuel' Hfuel'; destruct (ge_diff Hfuel') as [k Hk]; clear Hfuel'; subst fuel'.
+    simpl.
+    rewrite H; reflexivity.
+  - (* WHILELOOP *)
+    destruct IHcexec1 as [fuel1 IHc1exec];
+      assert (Hc1exec := IHc1exec fuel1 (ge_refl fuel1));
+    destruct IHcexec2 as [fuel2 IHc2exec];
+      assert (Hc2exec := IHc2exec fuel2 (ge_refl fuel2)).
+    exists (1 + fuel1 + fuel2)%nat.
+    intros fuel' Hfuel'; destruct (ge_diff Hfuel') as [k Hk]; clear Hfuel'; subst fuel'.
+    simpl.
+    rewrite H.
+    remember (fuel1 + fuel2 + k)%nat as fuel_big.
+    remember c as c1; remember (WHILE b c1) as c2.
+    assert (Hc1execBig: cexec_bounded fuel_big s c1 = Some s') by
+      (apply IHc1exec; lia).
+    assert (Hc2execBig: cexec_bounded fuel_big s' c2 = Some s'') by
+      (apply IHc2exec; lia).
+    destruct (cexec_bounded fuel_big s c1) eqn:Hc1;
+      try inversion Hc1execBig.
+    destruct (cexec_bounded fuel_big s' c2) eqn:Hc2;
+      try inversion Hc2execBig.
+    subst; reflexivity.
+Qed.
 
 (** * 6. Small-step semantics for IMP *)
 
@@ -371,9 +444,32 @@ Inductive red: com * store -> com * store -> Prop :=
 Lemma red_progress:
   forall c s, c = SKIP \/ exists c', exists s', red (c, s) (c', s').
 Proof.
-  induction c; intros.
-  (* FILL IN HERE *)
-Abort.
+  induction c; intros;
+    (* SKIP *)
+    (try (left; reflexivity) || right);
+    (* ASSIGN *)
+    (* IFTHENELSE *)
+    try (eexists; eexists; constructor; fail).
+  - (* SEQ *)
+    destruct c1;
+      (* SEQ_DONE *)
+      try (
+        eexists; eexists; constructor;
+        fail);
+      (* SEQ_STEP *)
+      try (
+        specialize (IHc1 s); destruct IHc1 as [ IHc1 | IHc1 ]; try inversion IHc1;
+        destruct IHc1 as [c1Next [sNext Hc1]];
+        eexists; exists sNext; econstructor; eassumption;
+        exists (c1Next ;; c2); exists sNext;
+        apply red_seq_step; assumption;
+        fail).
+  - (* WHILE *)
+    destruct (beval s b) eqn:Hb;
+      eexists; eexists;
+      [ apply red_while_loop | apply red_while_done ];
+      assumption.
+Qed.
 
 Definition goes_wrong (c: com) (s: store) : Prop :=
   exists c', exists s',
@@ -383,8 +479,12 @@ Lemma not_goes_wrong:
   forall c s, ~(goes_wrong c s).
 Proof.
   intros c s (c' & s' & STAR & IRRED & NOTSKIP).
-  (* FILL IN HERE *)
-Abort.
+  pose proof (red_progress c' s').
+  inversion H; intuition; clear H1 NOTSKIP.
+  destruct H0 as [c'C [s'C Hred]].
+  specialize (IRRED (c'C, s'C)).
+  intuition.
+Qed.
 
 (** Sequences of reductions can go under a sequence context, generalizing
   rule [red_seq_step]. *)
@@ -577,6 +677,17 @@ Inductive step: com * cont * store -> com * cont * store -> Prop :=
   then resumes the loop at its next iteration (instead of stopping
   the loop like "break" does). Give the transition rules
   for the "continue" statement. *)
+(**
+<<
+  | step_continue_seq: forall c k s,
+      step (CONTINUE, Kseq c k, s) (CONTINUE, k, s)
+  | step_continue_while_done: forall b c k s,
+      beval s b = false ->
+      step (CONTINUE, Kwhile b c k, s) (SKIP, k, s)
+  | step_continue_while_true: forall b c k s,
+      beval s b = true ->
+      step (CONTINUE, Kwhile b c k, s) (c, Kwhile b c k, s)
+*)
 
 (** *** Exercise (3 stars, optional) *)
 (** In Java, loops as well as "break" and "continue" statements carry
@@ -595,16 +706,119 @@ Theorem cexec_to_steps:
   forall s c s', cexec s c s' -> forall k, star step (c, k, s) (SKIP, k, s').
 Proof.
   induction 1; intros k.
-  (* FILL IN HERE *)
-Abort.
+  - (* SKIP *)
+    constructor.
+  - (* ASGN *)
+    repeat econstructor.
+  - (* SEQ *)
+    econstructor. apply step_seq.
+    eapply star_trans. apply IHcexec1.
+    econstructor. apply step_skip_seq.
+    apply IHcexec2.
+  - (* IFTHENELSE *)
+    econstructor. apply step_ifthenelse.
+    apply IHcexec.
+  - (* WHILE FALSE *)
+    econstructor. apply step_while_done; try assumption.
+    econstructor.
+  - (* WHILE TRUE *)
+    econstructor. apply step_while_true; try assumption.
+    eapply star_trans. apply IHcexec1.
+    econstructor. apply step_skip_while.
+    apply IHcexec2.
+Qed.
 
 (** *** Exercise (3 stars, optional) *)
 (** Show the converse result: a sequence of steps to [(SKIP, Kstop)] corresponds
   to a big-step execution.  You need a lemma similar to [red_append_cexec],
   but also a notion of big-step execution of a continuation. *)
+  (*
+Notation "s =c[ c ]=> s'" := (cexec s c s') (at level 60, no associativity).
+Notation "s =k[ c ]=> s'" := (cexec s c s') (at level 60, no associativity).
+Notation "cs0 ~~> cs1" := (red cs0 cs1) (at level 60, no associativity).
+Notation "cs0 ~~>* cs1" := (star red cs0 cs1) (at level 60, no associativity).
+Notation "cks0 --> cks1" := (step cks0 cks1) (at level 60, no associativity).
+Notation "cks0 -->* cks1" := (star step cks0 cks1) (at level 60, no associativity).
+Notation "c '@@' k" := (apply_cont k c) (at level 59, no associativity).
 
-Theorem steps_to_cexec:
-  forall c s s', star step (c, Kstop, s) (SKIP, Kstop, s') -> cexec s c s'.
+
+
+  (*
+Lemma apply_cont_red_:
+  forall k c s s',
+  (c @@ k, s) ~~>* (SKIP, s') ->
+  exists s1,
+    (c @@ k, s) ~~>* (SKIP @@ k, s1) /\
+    (SKIP @@ k, s1) ~~>* (SKIP, s').
 Proof.
-  (* FILL IN HERE *)
-Abort.
+  intros until s'. intros Eall.
+  dependent induction k.
+  - simpl in *. exists s'.
+    split. apply Eall. apply star_refl.
+  - simpl in *. apply IHk in Eall.
+    (*  c0.c++k, s ~~> c++k, s0 ~~> .++k, s1 ~~> ., s'
+                   e1           e2           e3
+      |<------------------    Eall    --------------->| *)
+    destruct Eall as [s1 [Ee1e2 Ee3]].
+    assert (Hcontseq: (apply_cont k (c0;; c)) = (c0 ;; (apply_cont k c))) by admit.
+    rewrite Hcontseq in Ee1e2.
+需要证明：
+    如果  c0;c @@ k, s  ~~>*   @@ k, s1
+    那么存在 s0,
+      c0;c @@ k, s ~~>* c @@ k, s0
+      c @@ k, s0 ~~>* @@ k, s0
+*)
+
+Let cn := WHILE FALSE (WHILE FALSE SKIP).
+  (* Is it allowed? *)
+Let kn := Kwhile FALSE (WHILE FALSE SKIP) Kstop.
+(* TODO *)
+Inductive stepexec: store -> cont -> store -> Prop :=
+  | stepexec_stop: forall s,
+      stepexec s Kstop s
+  | stepexec_seq_skip: forall s s' k,
+      stepexec s k s' ->
+      stepexec s (Kseq SKIP k) s'
+  | stepexec_seq_assign: forall s x a s' k,
+      stepexec (update x (aeval s a) s) k s' ->
+      stepexec s (Kseq (ASSIGN x a) k) s'
+  | stepexec_seq_ifthenelse: forall s b c1 c2 s' k,
+      stepexec s (Kseq (if (beval s b) then c1 else c2) k) s' ->
+      stepexec s (Kseq (IFTHENELSE b c1 c2) k) s'
+  | stepexec_seq_while: forall s b c s' k,
+      beval s b = false ->
+      stepexec s (Kwhile b c k) s' ->
+      stepexec s (Kseq (WHILE b c) k) s'
+  | stepexec_while_done: forall s b c s' k,
+      beval s b = false ->
+      stepexec s k s' ->
+      stepexec s (Kwhile b c k) s'
+  | stepexec_while_loop: forall s b c s' k,
+      beval s b = true ->
+      stepexec s (Kseq c (Kwhile b c k)) s' ->
+      stepexec s (Kwhile b c k) s'.
+
+Lemma step_append_red:
+  forall c1 k1 s1 c2 k2 s2, step (c1, k1, s1) (c2, k2, s2) ->
+  forall s', star red (apply_cont k2 c2, s2) (SKIP, s') ->
+  star red (apply_cont k1 c1, s1) (SKIP, s').
+Proof.
+  intros until s2. intros Hstep. dependent induction Hstep.
+  Admitted.
+
+Lemma step_append_cexec:
+  forall c1 k1 s1 c2 k2 s2, step (c1, k1, s1) (c2, k2, s2) ->
+  forall s', cexec s2 (apply_cont k2 c2) s' ->
+  cexec s1 (apply_cont k1 c1) s'.
+Proof.
+  intros until s2. intros Hstep. dependent induction Hstep.
+Admitted.
+
+Theorem steps_to_cexec1:
+  forall c s s' k, star step (c, k, s) (SKIP, Kstop, s') -> cexec s (apply_cont k c) s'.
+Proof.
+  intros. dependent induction H.
+  - apply cexec_skip.
+  - destruct b as [[c1 k1] s1]. apply step_append_cexec with c1 k1 s1; auto.
+Qed.
+*)

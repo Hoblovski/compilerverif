@@ -1,4 +1,5 @@
 -R . EUTypes2019.CompilerVerification
+Lemmas.v
 Sequences.v
 IMP.v
 Compil.v

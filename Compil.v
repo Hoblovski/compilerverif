@@ -117,7 +117,6 @@ Definition machine_terminates (C: code) (s_init: store) (s_final: store) : Prop 
           /\ instr_at C pc = Some Ihalt.
 
 (** The machine can also run forever, making infinitely many transitions. *)
-
 Definition machine_diverges (C: code) (s_init: store) : Prop :=
   infseq (transition C) (0, nil, s_init).
 
