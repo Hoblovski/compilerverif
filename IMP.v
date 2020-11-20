@@ -732,63 +732,149 @@ Qed.
 (** Show the converse result: a sequence of steps to [(SKIP, Kstop)] corresponds
   to a big-step execution.  You need a lemma similar to [red_append_cexec],
   but also a notion of big-step execution of a continuation. *)
-  (*
-Notation "s =c[ c ]=> s'" := (cexec s c s') (at level 60, no associativity).
-Notation "s =k[ c ]=> s'" := (cexec s c s') (at level 60, no associativity).
-Notation "cs0 ~~> cs1" := (red cs0 cs1) (at level 60, no associativity).
-Notation "cs0 ~~>* cs1" := (star red cs0 cs1) (at level 60, no associativity).
-Notation "cks0 --> cks1" := (step cks0 cks1) (at level 60, no associativity).
-Notation "cks0 -->* cks1" := (star step cks0 cks1) (at level 60, no associativity).
-Notation "c '@@' k" := (apply_cont k c) (at level 59, no associativity).
 
+Ltac easy_head :=
+    eapply cexec_seq;
+      try (eassumption; fail);
+      try (econstructor; eassumption; fail).
 
+Ltac inv_Hcexec := repeat match goal with
+                    | H: cexec _ (_;; _) _ |- _ => inv H
+                    | H: cexec _ SKIP _ |- _ => inv H
+                    end.
 
-  (*
-Lemma apply_cont_red_:
-  forall k c s s',
-  (c @@ k, s) ~~>* (SKIP, s') ->
-  exists s1,
-    (c @@ k, s) ~~>* (SKIP @@ k, s1) /\
-    (SKIP @@ k, s1) ~~>* (SKIP, s').
+Lemma cexec_head_skip_noop: forall s c s',
+  cexec s c s' <-> cexec s (SKIP;; c) s'.
 Proof.
-  intros until s'. intros Eall.
-  dependent induction k.
-  - simpl in *. exists s'.
-    split. apply Eall. apply star_refl.
-  - simpl in *. apply IHk in Eall.
-    (*  c0.c++k, s ~~> c++k, s0 ~~> .++k, s1 ~~> ., s'
-                   e1           e2           e3
-      |<------------------    Eall    --------------->| *)
-    destruct Eall as [s1 [Ee1e2 Ee3]].
-    assert (Hcontseq: (apply_cont k (c0;; c)) = (c0 ;; (apply_cont k c))) by admit.
-    rewrite Hcontseq in Ee1e2.
-需要证明：
-    如果  c0;c @@ k, s  ~~>*   @@ k, s1
-    那么存在 s0,
-      c0;c @@ k, s ~~>* c @@ k, s0
-      c @@ k, s0 ~~>* @@ k, s0
-*)
+  split; intros.
+  - easy_head.
+  - inv_Hcexec. assumption.
+Qed.
 
-Let cn := WHILE FALSE (WHILE FALSE SKIP).
-  (* Is it allowed? *)
-Let kn := Kwhile FALSE (WHILE FALSE SKIP) Kstop.
-(* TODO *)
+Lemma cexec_tail_skip_noop: forall s c s',
+  cexec s c s' <-> cexec s (c;; SKIP) s'.
+Proof.
+  split; intros.
+  - easy_head.
+  - inv_Hcexec. assumption.
+Qed.
+
+Ltac strip_cexec_skip := match goal with
+                    | |- cexec _ (SKIP;; _) _ => rewrite <- cexec_head_skip_noop
+                    | |- cexec _ (_;; SKIP) _ => rewrite <- cexec_tail_skip_noop
+                    end.
+
+Lemma apply_cont_seq: forall k c1 c2 s s',
+  cexec s (SEQ c1 (apply_cont k c2)) s' <-> cexec s (apply_cont k (SEQ c1 c2)) s'.
+Proof with easy_head.
+  induction k; split; intros; simpl in *;
+    try auto;
+    try (
+      inv_Hcexec;
+      rewrite <- IHk in *;
+      inv_Hcexec; easy_head);
+    try (
+      rewrite <- IHk in *;
+      inv_Hcexec; easy_head;
+      rewrite <- IHk in *; easy_head).
+Qed.
+
+Lemma apply_cont_done: forall k c s s',
+  cexec s (SEQ c (apply_cont k SKIP)) s' <-> cexec s (apply_cont k c) s'.
+Proof with repeat easy_head.
+  induction k; split; intros; simpl in *.
+  (* Kstop *)
+  - inv_Hcexec...
+    assumption.
+  - strip_cexec_skip.
+    assumption.
+  (* Kseq *)
+  - inv_Hcexec...
+    rewrite <- IHk in *.
+    inv_Hcexec...
+  - rewrite <- IHk in *.
+    inv_Hcexec...
+    rewrite <- IHk in *.
+    inv_Hcexec...
+  (* Kwhile *)
+  - inv_Hcexec...
+    rewrite <- IHk in *.
+    inv_Hcexec...
+  - rewrite <- IHk in *.
+    inv_Hcexec...
+    rewrite <- IHk in *.
+    inv_Hcexec...
+Qed.
+
+Inductive Wrapper {P: Prop} := mkWrap: P -> @Wrapper P.
+Lemma deWrap: forall P, @Wrapper P -> P.
+intros. inv H. assumption. Qed.
+
+Ltac destruct_Hexec :=
+  repeat match goal with
+  | H: cexec _ (apply_cont _ (_;; _)) _ |- _=>
+      rewrite <- apply_cont_seq in H; inv H
+  | H: cexec _ (apply_cont _ SKIP) _ |- _=>
+      pose proof (mkWrap H); clear H
+  | H: cexec _ (apply_cont _ _) _ |- _ =>
+      rewrite <- apply_cont_done in H; inv H
+  end;
+  repeat match goal with
+  | H: @Wrapper _ |- _ =>
+      apply deWrap in H
+  end.
+
+Ltac destruct_solve_goal :=
+  repeat match goal with
+  | |- cexec _ (apply_cont _ (_;; _)) _ =>
+      rewrite <- apply_cont_seq; easy_head
+  | |- cexec _ (apply_cont _ _) _ =>
+      rewrite <- apply_cont_done; easy_head
+  end.
+
+Lemma step_append_cexec:
+  forall c1 k1 s1 c2 k2 s2, step (c1, k1, s1) (c2, k2, s2) ->
+  forall s', cexec s2 (apply_cont k2 c2) s' ->
+  cexec s1 (apply_cont k1 c1) s'.
+Proof with repeat easy_head.
+  intros until s2; intros Hstep.
+  dependent induction Hstep;
+    intros; simpl in *;
+    destruct_Hexec;
+    destruct_solve_goal.
+Qed.
+
+Theorem steps_to_cexec:
+  forall c s s' k, star step (c, k, s) (SKIP, Kstop, s') -> cexec s (apply_cont k c) s'.
+Proof.
+  intros. dependent induction H.
+  - apply cexec_skip.
+  - destruct b as [[c1 k1] s1]. apply step_append_cexec with c1 k1 s1; auto.
+Qed.
+
+
+
+Section UNUSED.
 Inductive stepexec: store -> cont -> store -> Prop :=
   | stepexec_stop: forall s,
       stepexec s Kstop s
+
   | stepexec_seq_skip: forall s s' k,
       stepexec s k s' ->
       stepexec s (Kseq SKIP k) s'
   | stepexec_seq_assign: forall s x a s' k,
       stepexec (update x (aeval s a) s) k s' ->
       stepexec s (Kseq (ASSIGN x a) k) s'
+  | stepexec_seq_seq: forall s c1 c2 s' k,
+      stepexec s (Kseq c1 (Kseq c2 k)) s' ->
+      stepexec s (Kseq (SEQ c1 c2) k) s'
   | stepexec_seq_ifthenelse: forall s b c1 c2 s' k,
       stepexec s (Kseq (if (beval s b) then c1 else c2) k) s' ->
       stepexec s (Kseq (IFTHENELSE b c1 c2) k) s'
   | stepexec_seq_while: forall s b c s' k,
-      beval s b = false ->
       stepexec s (Kwhile b c k) s' ->
       stepexec s (Kseq (WHILE b c) k) s'
+
   | stepexec_while_done: forall s b c s' k,
       beval s b = false ->
       stepexec s k s' ->
@@ -798,27 +884,61 @@ Inductive stepexec: store -> cont -> store -> Prop :=
       stepexec s (Kseq c (Kwhile b c k)) s' ->
       stepexec s (Kwhile b c k) s'.
 
-Lemma step_append_red:
-  forall c1 k1 s1 c2 k2 s2, step (c1, k1, s1) (c2, k2, s2) ->
-  forall s', star red (apply_cont k2 c2, s2) (SKIP, s') ->
-  star red (apply_cont k1 c1, s1) (SKIP, s').
+Lemma stepexec_to_cexec: forall s s' k,
+  stepexec s k s' -> cexec s (apply_cont k SKIP) s'.
 Proof.
-  intros until s2. intros Hstep. dependent induction Hstep.
-  Admitted.
-
-Lemma step_append_cexec:
-  forall c1 k1 s1 c2 k2 s2, step (c1, k1, s1) (c2, k2, s2) ->
-  forall s', cexec s2 (apply_cont k2 c2) s' ->
-  cexec s1 (apply_cont k1 c1) s'.
-Proof.
-  intros until s2. intros Hstep. dependent induction Hstep.
-Admitted.
-
-Theorem steps_to_cexec1:
-  forall c s s' k, star step (c, k, s) (SKIP, Kstop, s') -> cexec s (apply_cont k c) s'.
-Proof.
-  intros. dependent induction H.
-  - apply cexec_skip.
-  - destruct b as [[c1 k1] s1]. apply step_append_cexec with c1 k1 s1; auto.
+  intros *. intros Hstepexec. dependent induction Hstepexec.
+  - (* Kstop *)
+    simpl in *. apply cexec_skip.
+  - (* Kseq SKIP k *)
+    simpl in *. rewrite <- apply_cont_seq.
+    eapply cexec_seq. econstructor.
+    assumption.
+  - (* Kseq ASSIGN k *)
+    simpl in *. rewrite <- apply_cont_seq.
+    eapply cexec_seq. econstructor.
+    rewrite <- apply_cont_done.
+    eapply cexec_seq. econstructor. assumption.
+  - (* Kseq SEQ k *)
+    simpl in *.
+    rewrite <- apply_cont_seq in IHHstepexec.
+    inv IHHstepexec. inv H2. inv H3.
+    rewrite <- apply_cont_seq.
+    eapply cexec_seq. econstructor.
+    rewrite <- apply_cont_seq.
+    eapply cexec_seq. eassumption. assumption.
+  - (* Kseq IFTHENELSE k *)
+    simpl in *.
+    rewrite <- apply_cont_seq in IHHstepexec.
+    inv IHHstepexec. inv H2.
+    rewrite <- apply_cont_seq.
+      eapply cexec_seq. econstructor.
+    rewrite <- apply_cont_done.
+    rewrite <- apply_cont_done in H4.
+    inv H4.
+      eapply cexec_seq. econstructor.
+      eassumption.
+      assumption.
+  - (* Kseq WHILE k *)
+    simpl in *. assumption.
+  - (* KWhile false c k *)
+    simpl in *.
+    rewrite <- apply_cont_seq.
+    eapply cexec_seq. econstructor.
+    rewrite <- apply_cont_done.
+    eapply cexec_seq. econstructor; assumption.
+    assumption.
+  - (* KWhile true c k *)
+    (*remember (Kwhile b c k) as kw.*)
+    simpl in *.
+    rewrite <- apply_cont_seq in IHHstepexec.
+    inv IHHstepexec. inv H3. inv H4.
+    rewrite <- apply_cont_done in H5.
+    inv H5.
+    rewrite <- apply_cont_seq.
+    eapply cexec_seq. econstructor.
+    rewrite <- apply_cont_done.
+    eapply cexec_seq. eapply cexec_while_loop.
+    eassumption. eassumption. eassumption. eassumption.
 Qed.
-*)
+End UNUSED.
